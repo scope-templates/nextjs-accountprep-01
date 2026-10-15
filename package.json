@@ -1,0 +1,35 @@
+{
+  "name": "pemberline-account-desk",
+  "version": "1.4.0",
+  "private": true,
+  "type": "module",
+  "description": "Account desk for the Pemberline sales team: prospects, contacts, meetings, typed-in facts and an assistant for call prep",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "seed:generate": "node --experimental-strip-types scripts/generate-seed.ts"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "2.0.109",
+    "ai": "5.0.276",
+    "better-sqlite3": "13.0.3",
+    "next": "16.3.8",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "22.20.4",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
+  }
+}
