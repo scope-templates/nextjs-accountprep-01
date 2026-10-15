@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { MockLanguageModelV2 } from 'ai/test';
+import { MockLanguageModelV3 } from 'ai/test';
 import { MAX_MODEL_CALLS, answerQuestion } from '@/lib/assistant/answer';
 import { ASSISTANT_MODEL_ID, anthropicModel, modelFromEnv } from '@/lib/assistant/model';
 import { findAccount, notesFor } from '@/lib/desk';
 import { getAccounts, postAssistant, postNote } from '@/lib/handlers';
 import {
-  IVY, MARCUS, NOW, accountOwnedBy, accountsUrl, activity, alwaysCallsTools, deps, jsonRequest, person, scriptedModel, testDb, toolResultsSeen,
+  IVY, MARCUS, NOW, accountOwnedBy, accountsUrl, activity, alwaysCallsTools, deps, hostedLookup, jsonRequest, partsSent, person, scriptedModel, testDb,
+  toolResultsSeen, turnsModel,
 } from './helpers';
 
 const DESK_TOOLS = ['account_summary', 'contacts', 'meetings', 'facts', 'save_note'];
@@ -75,9 +76,24 @@ describe('assistant route', () => {
     expect((await res.json()).code).toBe('model_call_failed');
   });
 
+  it('aborts the model call when the rep closes the request', async () => {
+    const db = testDb();
+    const closed = new AbortController();
+    const model = turnsModel((_, { abortSignal }) => {
+      closed.abort();
+      abortSignal?.throwIfAborted();
+      return [{ type: 'text', text: 'Too late.' }];
+    });
+    const req = new Request(ask(), { signal: closed.signal });
+    const res = await postAssistant({ ...deps(db, MARCUS), model }, '1', req);
+    expect(model.doGenerateCalls[0].abortSignal?.aborted).toBe(true);
+    expect(model.doGenerateCalls).toHaveLength(1);
+    expect(res.status).toBe(502);
+  });
+
   it('answers 502 model_call_failed without the provider text when the model call throws', async () => {
     const db = testDb();
-    const model = new MockLanguageModelV2({ doGenerate: async () => { throw new Error('upstream said: secret-detail'); } });
+    const model = new MockLanguageModelV3({ doGenerate: async () => { throw new Error('upstream said: secret-detail'); } });
     const res = await postAssistant({ ...deps(db, MARCUS), model }, '1', ask());
     const text = await res.text();
     expect(res.status).toBe(502);
@@ -124,8 +140,71 @@ describe('tool-calling loop', () => {
     const last = model.doGenerateCalls[5];
     expect(last.toolChoice).toEqual({ type: 'none' });
     expect(last.prompt.some((m) => m.role === 'tool')).toBe(false);
-    expect(last.prompt.flatMap((m) => (typeof m.content === 'string' ? [] : m.content)).some((p) => p.type === 'tool-call' || p.type === 'tool-result')).toBe(false);
+    expect(partsSent(model, 5).some((p) => p.type === 'tool-call' || p.type === 'tool-result')).toBe(false);
     expect(result.answer).toBe('Turn 6: reading the facts again.');
+  });
+
+  it('writes a provider-run tool result out as text on the sixth call, as it does a desk tool result', async () => {
+    const db = testDb();
+    const model = turnsModel((turn) => [
+      ...(turn === 1 ? hostedLookup(turn) : []),
+      { type: 'tool-call', toolCallId: `call-${turn}`, toolName: 'facts', input: '{}' },
+    ]);
+    await answerQuestion({ db, now: NOW, model, account: findAccount(db, 1)!, actor: person(db, MARCUS), question: 'Anything to add?' });
+    expect(model.doGenerateCalls).toHaveLength(MAX_MODEL_CALLS);
+    const sent = partsSent(model, MAX_MODEL_CALLS - 1);
+    expect(sent.some((p) => p.type === 'tool-call' || p.type === 'tool-result')).toBe(false);
+    const text = sent.map((p) => p.text ?? '').join('\n');
+    expect(text).toContain('hosted_lookup');
+    expect(text).toContain('row 1');
+    expect(text).toContain('Result of facts: [');
+  });
+
+  it('takes the next call when a call ends with no text after a provider-run tool, and sends that result back', async () => {
+    const db = testDb();
+    const model = turnsModel((turn) => (turn === 1 ? hostedLookup(turn) : [{ type: 'text', text: 'Done.' }]));
+    const res = await postAssistant({ ...deps(db, MARCUS), model }, '1', ask('Anything to add?'));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ answer: 'Done.' });
+    expect(model.doGenerateCalls).toHaveLength(2);
+    expect(model.doGenerateCalls[1].toolChoice).toEqual({ type: 'auto' });
+    expect(partsSent(model, 1)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'tool-call', toolName: 'hosted_lookup' }),
+      expect.objectContaining({ type: 'tool-result', toolName: 'hosted_lookup' }),
+    ]));
+  });
+
+  it('takes the next call when a call wrote some text and then ended on a provider-run tool', async () => {
+    const db = testDb();
+    const model = turnsModel((turn) =>
+      turn === 1
+        ? [{ type: 'text', text: 'One moment.' }, ...hostedLookup(turn), { type: 'text', text: ' ' }]
+        : [{ type: 'text', text: 'Done.' }],
+    );
+    const res = await postAssistant({ ...deps(db, MARCUS), model }, '1', ask('Anything to add?'));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ answer: 'Done.' });
+    expect(model.doGenerateCalls).toHaveLength(2);
+  });
+
+  it('keeps those calls inside the six: a provider-run tool with no text on every call ends at six, the sixth with tool choice none, and answers 502', async () => {
+    const db = testDb();
+    const model = turnsModel((turn) => hostedLookup(turn));
+    const res = await postAssistant({ ...deps(db, MARCUS), model }, '1', ask('Anything to add?'));
+    expect(model.doGenerateCalls).toHaveLength(MAX_MODEL_CALLS);
+    expect(model.doGenerateCalls[MAX_MODEL_CALLS - 1].toolChoice).toEqual({ type: 'none' });
+    expect(res.status).toBe(502);
+    expect((await res.json()).code).toBe('model_call_failed');
+  });
+
+  it('keeps those calls inside the six when desk tools follow a provider-run tool', async () => {
+    const db = testDb();
+    const model = turnsModel((turn) =>
+      turn === 1 ? hostedLookup(turn) : [{ type: 'tool-call', toolCallId: `call-${turn}`, toolName: 'facts', input: '{}' }],
+    );
+    await postAssistant({ ...deps(db, MARCUS), model }, '1', ask('Anything to add?'));
+    expect(model.doGenerateCalls).toHaveLength(MAX_MODEL_CALLS);
+    expect(model.doGenerateCalls[MAX_MODEL_CALLS - 1].toolChoice).toEqual({ type: 'none' });
   });
 
   it('sends the sixth request to the Anthropic API with no tools and no tool blocks, and returns its text', async () => {

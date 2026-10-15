@@ -118,6 +118,8 @@ describe('owners', () => {
     expect(res.status).toBe(200);
     expect(findAccount(db, id)!.owner_id).toBe(IVY);
     expect(activity(db, 'owner_changed').at(-1)).toEqual({ actor_id: HEAD, action: 'owner_changed', account_id: id, detail: JSON.stringify({ from: MARCUS, to: IVY }) });
+    expect((await postOwner(deps(db, HEAD), String(id), jsonRequest({ owner_id: String(MARCUS) }))).status).toBe(200);
+    expect(findAccount(db, id)!.owner_id).toBe(MARCUS);
   });
 
   it('refuses reassignment by a rep or an admin, and to someone outside sales', async () => {
@@ -136,6 +138,7 @@ describe('owners', () => {
     expect(await mine.json()).toMatchObject({ owner_id: IVY, stage: 'lead', created_on: '2026-10-14' });
     expect((await postAccount(deps(db, IVY), jsonRequest({ ...account, owner_id: MARCUS }))).status).toBe(403);
     expect((await postAccount(deps(db, HEAD), jsonRequest({ ...account, owner_id: MARCUS }))).status).toBe(201);
+    expect(await (await postAccount(deps(db, HEAD), jsonRequest({ ...account, owner_id: String(MARCUS) }))).json()).toMatchObject({ owner_id: MARCUS });
     expect((await postAccount(deps(db, ADMIN), jsonRequest(account))).status).toBe(403);
   });
 });

@@ -48,6 +48,8 @@ const isoDate = z
   .refine(isRealDate, 'must be a date as YYYY-MM-DD')
   .refine((s) => s >= '2000-01-01', 'must be on or after 2000-01-01');
 
+const staffId = z.preprocess((raw) => (typeof raw === 'string' ? (parseId(raw) ?? raw) : raw), z.number().int().positive());
+
 function invalid(error: z.ZodError): Refusal {
   const detail = error.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; ');
   return refuse(400, 'invalid_body', 'The request body is not valid', detail);
@@ -143,7 +145,7 @@ const factInput = z.object({
   field: z.enum(FACT_FIELDS),
   value: z.string().trim().min(1).max(200),
   checked_on: isoDate,
-  checked_by: z.number().int().positive(),
+  checked_by: staffId,
   note: z.string().trim().max(500).default(''),
 });
 
@@ -222,7 +224,7 @@ const accountInput = z.object({
   hq_state: z.string().trim().regex(/^[A-Z]{2}$/, 'must be a two-letter state code'),
   fleet_size_told: z.number().int().min(0).max(5000).nullable().default(null),
   stage: z.enum(STAGES).default('lead'),
-  owner_id: z.number().int().positive().optional(),
+  owner_id: staffId.optional(),
 });
 
 export function createAccount(db: Db, actor: Staff | null, input: unknown, at = new Date()): Outcome<Account> {
@@ -278,7 +280,7 @@ export function changeStage(db: Db, actor: Staff | null, accountId: number, inpu
   return done(findAccount(db, accountId)!);
 }
 
-const ownerInput = z.object({ owner_id: z.number().int().positive() });
+const ownerInput = z.object({ owner_id: staffId });
 
 export function reassignOwner(db: Db, actor: Staff | null, accountId: number, input: unknown, at = new Date()): Outcome<Account> {
   if (!actor) return SIGNED_OUT;
@@ -298,7 +300,7 @@ export function reassignOwner(db: Db, actor: Staff | null, accountId: number, in
 
 const staffInput = z.object({
   name: z.string().trim().min(1).max(80),
-  email: z.string().trim().toLowerCase().email(),
+  email: z.string().trim().toLowerCase().pipe(z.email()),
   role: z.enum(ROLES),
 });
 const staffUpdate = z.object({ role: z.enum(ROLES).optional(), active: z.boolean().optional() });

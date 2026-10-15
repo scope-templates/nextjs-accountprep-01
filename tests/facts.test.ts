@@ -29,6 +29,13 @@ describe('POST /api/accounts/[id]/facts', () => {
     expect(body.checked_by_name).toBe('Delphine Okoro');
   });
 
+  it('takes checked_by as a numeric string, as it takes the id in the path', async () => {
+    const { res, body } = await post(MARCUS, fact({ checked_by: String(HEAD) }));
+    expect(res.status).toBe(201);
+    expect(body).toMatchObject({ checked_by: HEAD, checked_by_name: 'Delphine Okoro' });
+    expect((await post(MARCUS, fact({ checked_by: 'Delphine' }))).body.code).toBe('invalid_body');
+  });
+
   it.each([
     ['checked_on', fact({ checked_on: undefined })],
     ['checked_by', fact({ checked_by: undefined })],

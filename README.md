@@ -104,7 +104,7 @@ npm run typecheck
 ```
 
 Vitest runs against an in-memory SQLite store loaded with the seed; every date a test checks comes from a fixed
-clock. The assistant tests drive the loop with `MockLanguageModelV2` from `ai/test`, and one drives the Anthropic
+clock. The assistant tests drive the loop with `MockLanguageModelV3` from `ai/test`, and one drives the Anthropic
 provider through a fake `fetch`; no test reads a model setting or makes a network call.
 
 ## The data
